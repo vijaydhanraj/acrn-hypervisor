@@ -146,6 +146,7 @@ struct virtio_blk {
 	pthread_mutex_t mtx;
 	struct virtio_vq_info vq;
 	struct virtio_blk_config cfg;
+	bool dummy_bctxt; /* For diskplug. indicate if the bctxt can be used */
 	struct blockif_ctxt *bc;
 	char ident[VIRTIO_BLK_BLK_ID_BYTES + 1];
 	struct virtio_blk_ioreq ios[VIRTIO_BLK_RINGSZ];
@@ -176,7 +177,8 @@ virtio_blk_reset(void *vdev)
 
 	DPRINTF(("virtio_blk: device reset requested !\n"));
 	virtio_reset_dev(&blk->base);
-	blockif_set_wce(blk->bc, blk->original_wce);
+	if (!(blk->dummy_bctxt))
+		blockif_set_wce(blk->bc, blk->original_wce);
 }
 
 static void
@@ -351,6 +353,7 @@ virtio_blk_get_caps(struct virtio_blk *blk, bool wb)
 static int
 virtio_blk_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 {
+	bool dummy_bctxt;
 	char bident[16];
 	struct blockif_ctxt *bctxt;
 	MD5_CTX mdctx;
@@ -373,15 +376,22 @@ virtio_blk_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 				dev->slot, dev->func) >= sizeof(bident)) {
 		WPRINTF(("bident error, please check slot and func\n"));
 	}
-	bctxt = blockif_open(opts, bident);
-	if (bctxt == NULL) {
+	bctxt = blockif_open(opts, bident, &dummy_bctxt);
+	if (!dummy_bctxt && bctxt == NULL) {
 		perror("Could not open backing file");
 		return -1;
 	}
 
-	size = blockif_size(bctxt);
-	sectsz = blockif_sectsz(bctxt);
-	blockif_psectsz(bctxt, &sts, &sto);
+	if (dummy_bctxt) {
+		size  = 0;
+		sectsz = 0;
+		sts = 0;
+		sto = 0;
+	} else {
+		size = blockif_size(bctxt);
+		sectsz = blockif_sectsz(bctxt);
+		blockif_psectsz(bctxt, &sts, &sto);
+	}
 
 	blk = calloc(1, sizeof(struct virtio_blk));
 	if (!blk) {
@@ -389,7 +399,15 @@ virtio_blk_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 		return -1;
 	}
 
-	blk->bc = bctxt;
+	if (dummy_bctxt) {
+		blk->bc = NULL;
+		blk->dummy_bctxt = dummy_bctxt;
+	}
+	else {
+		blk->bc = bctxt;
+		blk->dummy_bctxt = dummy_bctxt;
+	}
+
 	for (i = 0; i < VIRTIO_BLK_RINGSZ; i++) {
 		struct virtio_blk_ioreq *io = &blk->ios[i];
 
@@ -448,15 +466,17 @@ virtio_blk_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	    (sto != 0) ? ((sts - sto) / sectsz) : 0;
 	blk->cfg.topology.min_io_size = 0;
 	blk->cfg.topology.opt_io_size = 0;
-	blk->cfg.writeback = blockif_get_wce(blk->bc);
+	blk->cfg.writeback = dummy_bctxt? 0: blockif_get_wce(blk->bc);
 	blk->original_wce = blk->cfg.writeback; /* save for reset */
-	if (blockif_candiscard(blk->bc)) {
-		blk->cfg.max_discard_sectors = blockif_max_discard_sectors(blk->bc);
-		blk->cfg.max_discard_seg = blockif_max_discard_seg(blk->bc);
-		blk->cfg.discard_sector_alignment = blockif_discard_sector_alignment(blk->bc);
+	if (!dummy_bctxt) {
+		if (blockif_candiscard(blk->bc)) {
+			blk->cfg.max_discard_sectors = blockif_max_discard_sectors(blk->bc);
+			blk->cfg.max_discard_seg = blockif_max_discard_seg(blk->bc);
+			blk->cfg.discard_sector_alignment = blockif_discard_sector_alignment(blk->bc);
+		}
+		blk->base.device_caps =
+			virtio_blk_get_caps(blk, !!blk->cfg.writeback);
 	}
-	blk->base.device_caps =
-		virtio_blk_get_caps(blk, !!blk->cfg.writeback);
 
 	/*
 	 * Should we move some of this into virtio.c?  Could
@@ -487,11 +507,13 @@ virtio_blk_deinit(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	if (dev->arg) {
 		DPRINTF(("virtio_blk: deinit\n"));
 		blk = (struct virtio_blk *) dev->arg;
-		bctxt = blk->bc;
-		if (blockif_flush_all(bctxt))
-			WPRINTF(("vrito_blk:"
-				"Failed to flush before close\n"));
-		blockif_close(bctxt);
+		if (!(blk->dummy_bctxt)) {
+			bctxt = blk->bc;
+			if (blockif_flush_all(bctxt))
+				WPRINTF(("vrito_blk:"
+					"Failed to flush before close\n"));
+			blockif_close(bctxt);
+		}
 		free(blk);
 	}
 }
@@ -516,6 +538,11 @@ virtio_blk_cfgwrite(void *vdev, int offset, int size, uint32_t value)
 		return 0;
 	}
 
+	if (offset == offsetof(struct virtio_blk_config, capacity)) {
+		memcpy(ptr, &value, size);
+		return 0;
+	}
+
 	DPRINTF(("virtio_blk: write to readonly reg %d\n\r", offset));
 	return -1;
 }
@@ -532,11 +559,64 @@ virtio_blk_cfgread(void *vdev, int offset, int size, uint32_t *retval)
 	return 0;
 }
 
+/* disk plug callback to a virtio-blk device*/
+int
+virtio_blk_diskplug_cb (struct vmctx *ctx, struct pci_vdev *dev, char *newpath, uint64_t newsize)
+{
+
+	bool dummy_bctxt;
+	int error =0;
+	char bident[16];
+	struct blockif_ctxt *bctxt;
+	struct virtio_blk *blk = (struct virtio_blk *) dev->arg;
+
+	/* validate inputs for virtio-blk diskplug */
+	if (newpath == NULL) {
+		error = -1;
+		fprintf(stderr, "no path available\n");
+		goto end;
+	}
+
+	if (newsize % DEV_BSIZE) {
+		error = -1;
+		fprintf(stderr, "Size %ld not correct! should be a multiple of %d\n", newsize, DEV_BSIZE);
+		goto end;
+	} else {
+		newsize = newsize / DEV_BSIZE;
+	}
+
+	if (snprintf(bident, sizeof(bident), "%d:%d",
+				dev->slot, dev->func) >= sizeof(bident)) {
+		error = -1;
+		fprintf(stderr, "bident error, please check slot and func\n");
+		goto end;
+	}
+
+	/* update the bctxt for the device */
+	bctxt = blockif_open(newpath, bident, &dummy_bctxt);
+	if (bctxt == NULL || (dummy_bctxt == true)) {
+		error = -1;
+		fprintf(stderr, "Could not open backing file\n");
+		goto end;
+	}
+	blk->bc = bctxt;
+
+	/*Update new capacity in the config space */
+	virtio_blk_cfgwrite(blk, 0, 4, newsize);
+
+	/* Notify guest of config change */
+	virtio_config_changed(dev->arg);
+
+end:
+	return error;
+}
+
 struct pci_vdev_ops pci_ops_virtio_blk = {
 	.class_name	= "virtio-blk",
 	.vdev_init	= virtio_blk_init,
 	.vdev_deinit	= virtio_blk_deinit,
 	.vdev_barwrite	= virtio_pci_write,
-	.vdev_barread	= virtio_pci_read
+	.vdev_barread	= virtio_pci_read,
+	.vdev_diskplug	= virtio_blk_diskplug_cb
 };
 DEFINE_PCI_DEVTYPE(pci_ops_virtio_blk);

@@ -489,7 +489,7 @@ sub_file_unlock(struct blockif_ctxt *bc)
 
 
 struct blockif_ctxt *
-blockif_open(const char *optstr, const char *ident)
+blockif_open(const char *optstr, const char *ident, bool *dummy_bctxt )
 {
 	char tname[MAXCOMLEN + 1];
 	/* char name[MAXPATHLEN]; */
@@ -608,6 +608,16 @@ blockif_open(const char *optstr, const char *ident)
 	if (fstat(fd, &sbuf) < 0) {
 		warn("Could not stat backing file %s", nopt);
 		goto err;
+	}
+
+	if (dummy_bctxt && (sbuf.st_size == 0)) {
+		/* This is an empty file created for diskplug.
+		 * Update bctxt on valid file.
+		 */
+		*dummy_bctxt = true;
+		goto err;
+	} else {
+		*dummy_bctxt = false;
 	}
 
 	/*

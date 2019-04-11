@@ -45,6 +45,7 @@
 #include "irq.h"
 #include "lpc.h"
 #include "sw_load.h"
+#include "monitor.h"
 
 #define CONF1_ADDR_PORT    0x0cf8
 #define CONF1_DATA_PORT    0x0cfc
@@ -81,6 +82,10 @@ struct businfo {
 };
 
 static struct businfo *pci_businfo[MAXBUSES];
+
+static struct monitor_vm_ops virtio_diskplug_ops = {
+	.diskplug	= vm_monitor_diskplug,
+};
 
 SET_DECLARE(pci_vdev_ops_set, struct pci_vdev_ops);
 
@@ -1382,6 +1387,17 @@ init_pci(struct vmctx *ctx)
 	error = register_mem(&mr);
 	assert(error == 0);
 
+	/*
+	 * Register ops for virtio-blk diskplug
+	 */
+	if (monitor_register_vm_ops(&virtio_diskplug_ops, ctx, "virtio_diskplug") < 0) {
+		/* Should we assert if registration fails or
+		 * continue and just log an error message ??
+		 */
+		fprintf(stderr, "Virtio diskplug register to VM monitor failed \n");
+	}
+
+
 	return 0;
 
 pci_emul_init_fail:
@@ -2436,6 +2452,76 @@ pci_emul_dior(struct vmctx *ctx, int vcpu, struct pci_vdev *dev, int baridx,
 	}
 
 	return value;
+}
+
+int
+vm_monitor_diskplug(void *arg, char *devargs)
+{
+	char *str;
+	char *str_slot, *str_newpath, *str_newsize;
+	int slot;
+	int error =0;
+	uint64_t newsize;
+
+	struct businfo *bi;
+	struct slotinfo *si;
+	struct pci_vdev *dev;
+	struct pci_vdev_ops *ops;
+	struct vmctx *ctx = (struct vmctx *)arg;
+
+
+	/*Extract slot,path and new size from args*/
+	str = strdup(devargs);
+
+	str_slot = strsep(&str, ",");
+	str_newpath = strsep(&str, ",");
+	str_newsize = strsep(&str, ",");
+
+	if ((str_slot != NULL) && (str_newpath != NULL) && (str_newsize != NULL)) {
+		error = dm_strtoi(str_slot, &str_slot, 10, &slot);
+		error |= dm_strtoul(str_newsize, &str_newsize, 10, &newsize);
+
+		if (error) {
+			fprintf(stderr, "Incorrect slot, new size parameter, error=0x%x!\n", error);
+			goto end;
+		}
+
+	} else {
+		fprintf(stderr, "Slot info, path or new size not available!");
+		error = -1;
+		goto end;
+	}
+
+	bi = pci_businfo[0];
+	assert(bi != NULL);
+
+	si = &bi->slotinfo[slot];
+	if (si != NULL) {
+		dev = si->si_funcs[0].fi_devi;
+	} else {
+		error = -1;
+		fprintf(stderr, "slot=%d is empty!\n", slot);
+		goto end;
+	}
+
+	if (dev) {
+		ops = dev->dev_ops;
+	} else {
+		error = -1;
+		fprintf(stderr, "No virtio device found at slot=%d\n", slot);
+		goto end;
+	}
+
+	if(ops->vdev_diskplug) {
+		(*ops->vdev_diskplug)(ctx, dev, str_newpath, newsize);
+	} else {
+		error = -1;
+		fprintf(stderr, "diskplug not supported by the virtio-blk device!");
+	}
+end:
+	if (str)
+		free(str);
+	return error;
 }
 
 struct pci_vdev_ops pci_dummy = {

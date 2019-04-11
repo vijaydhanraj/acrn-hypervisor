@@ -11,12 +11,18 @@
 
 #define MNGR_MSG_MAGIC   0x67736d206d6d76	/* that is char[8] "mngr msg", on X86 */
 #define PATH_LEN	128
+#define VMNAME_LEN	16
+#define PARAM_LEN	512
 
 struct mngr_msg {
 	unsigned long long magic;	/* Make sure you get a mngr_msg */
 	unsigned int msgid;
 	unsigned long timestamp;
 	union {
+
+		/* Arguments to the disk-plugged virtio-blk device */
+		char devargs[PARAM_LEN];
+
 		/* ack of DM_STOP, DM_SUSPEND, DM_RESUME, DM_PAUSE, DM_CONTINUE,
 		   ACRND_TIMER, ACRND_STOP, ACRND_RESUME, RTC_TIMER */
 		int err;
@@ -75,6 +81,7 @@ enum dm_msgid {
 	DM_PAUSE,		/* Freeze this virtual machine */
 	DM_CONTINUE,		/* Unfreeze this virtual machine */
 	DM_QUERY,		/* Ask power state of this UOS */
+	DM_DISKPLUG,		/* Plug virtio-blk device to this UOS */
 	DM_MAX,
 };
 

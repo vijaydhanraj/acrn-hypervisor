@@ -79,6 +79,10 @@ struct pci_vdev_ops {
 	uint64_t  (*vdev_barread)(struct vmctx *ctx, int vcpu,
 				struct pci_vdev *pi, int baridx,
 				uint64_t offset, int size);
+
+	/* Diskplug for virtio-blk device */
+	int	(*vdev_diskplug)(struct vmctx *ctx, struct pci_vdev *pi,
+				 char *newpath, uint64_t newsize);
 };
 
 /*

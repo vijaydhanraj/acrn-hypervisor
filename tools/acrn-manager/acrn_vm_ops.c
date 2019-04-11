@@ -476,3 +476,22 @@ int resume_vm(const char *vmname, unsigned reason)
 
 	return ack.data.err;
 }
+
+int diskplug_device_to_vm(const char *vmname, char *devargs)
+{
+	struct mngr_msg req;
+	struct mngr_msg ack;
+
+	req.magic = MNGR_MSG_MAGIC;
+	req.msgid = DM_DISKPLUG;
+	req.timestamp = time(NULL);
+	strncpy(req.data.devargs, devargs, strlen(devargs)+1);
+
+	send_msg(vmname, &req, &ack);
+
+	if (ack.data.err) {
+		printf("Unable to plug virtio-blk device to vm. errno(%d)\n", ack.data.err);
+	}
+
+	return ack.data.err;
+}
