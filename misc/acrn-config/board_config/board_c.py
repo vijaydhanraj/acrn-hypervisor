@@ -83,18 +83,22 @@ def gen_cat(config):
     """
     err_dic = {}
     (cache_support, clos_max) = board_cfg_lib.clos_info_parser(board_cfg_lib.BOARD_INFO_FILE)
+    if len(clos_max) != 0:
+        common_clos_max = min(clos_max)
+    else:
+        common_clos_max = 0
 
-    if clos_max > MSR_IA32_L2_MASK_END - MSR_IA32_L2_MASK_BASE or\
-        clos_max > MSR_IA32_L3_MASK_END - MSR_IA32_L3_MASK_BASE:
+    if common_clos_max > MSR_IA32_L2_MASK_END - MSR_IA32_L2_MASK_BASE or\
+        common_clos_max > MSR_IA32_L3_MASK_END - MSR_IA32_L3_MASK_BASE:
         err_dic["board config: generate board.c failed"] = "CLOS MAX should be less than reserved adress region length of L2/L3 cache"
         return err_dic
 
-    if cache_support == "False" or clos_max == 0:
+    if len(cache_support) == 0 or common_clos_max == 0:
         print("\nstruct platform_clos_info platform_clos_array[MAX_PLATFORM_CLOS_NUM];", file=config)
     else:
         print("\nstruct platform_clos_info platform_clos_array[{}] = {{".format(
             "MAX_PLATFORM_CLOS_NUM"), file=config)
-        for i_cnt in range(clos_max):
+        for i_cnt in range(common_clos_max):
             print("\t{", file=config)
 
             print("\t\t.clos_mask = {0}U,".format(hex(0xff)), file=config)
