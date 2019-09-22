@@ -23,7 +23,7 @@
 #include <msr.h>
 #include <ptdev.h>
 #include <logmsg.h>
-#include <cat.h>
+#include <rdt.h>
 #include <vboot.h>
 #include <sgx.h>
 #include <uart16550.h>
@@ -149,9 +149,9 @@ void init_pcpu_pre(bool is_bsp)
 			panic("System IOAPIC info is incorrect!");
 		}
 
-		ret = init_cat_cap_info();
+		ret = init_rdt_cap_info();
 		if (ret != 0) {
-			panic("Platform CAT info is incorrect!");
+			panic("Platform RDT info is incorrect!");
 		}
 
 		/* NOTE: this must call after MMCONFIG is parsed in init_vboot and before APs are INIT. */
@@ -256,7 +256,9 @@ void init_pcpu_post(uint16_t pcpu_id)
 
 	init_sched(pcpu_id);
 
-	setup_clos(pcpu_id);
+	if (!setup_clos(pcpu_id)) {
+		panic("CLOS resource MSRs setup incorrectly!");
+	}
 
 	enable_smep();
 

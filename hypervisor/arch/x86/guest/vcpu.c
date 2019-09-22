@@ -17,6 +17,7 @@
 #include <vmcs.h>
 #include <mmu.h>
 #include <sprintf.h>
+#include <rdt.h>
 
 /* stack_frame is linked with the sequence of stack operation in arch_switch_to() */
 struct stack_frame {

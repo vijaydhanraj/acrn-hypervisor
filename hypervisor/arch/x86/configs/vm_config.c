@@ -7,7 +7,7 @@
 #include <bits.h>
 #include <vm_config.h>
 #include <logmsg.h>
-#include <cat.h>
+#include <rdt.h>
 #include <pgtable.h>
 #include <vuart.h>
 
@@ -184,16 +184,15 @@ bool sanitize_vm_config(void)
 			break;
 		}
 
-		if ((vm_config->guest_flags & GUEST_FLAG_CLOS_REQUIRED) != 0U) {
-			if (cat_cap_info.support && (vm_config->clos <= cat_cap_info.clos_max)) {
-					cat_cap_info.enabled = true;
-			} else {
-				pr_err("%s set wrong CLOS or CAT is not supported\n", __func__);
-				ret = false;
-			}
+		if ((ret != false) &&
+			(platform_rdt_support() == true) &&
+			(vm_config->clos > (MAX_PLATFORM_CLOS_NUM - 1))) {
+			pr_err("%s set wrong CLOS. Please set below %d\n", __func__, MAX_PLATFORM_CLOS_NUM);
+			ret = false;
 		}
 
-		if (((vm_config->epc.size | vm_config->epc.base) & ~PAGE_MASK) != 0UL) {
+		if ((ret != false) &&
+		   (((vm_config->epc.size | vm_config->epc.base) & ~PAGE_MASK) != 0UL)) {
 			ret = false;
 		}
 
