@@ -8,6 +8,7 @@ import sys
 import getopt
 import shutil
 import subprocess
+import re
 import xml.etree.ElementTree as ET
 
 SOURCE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../')
@@ -611,7 +612,7 @@ def get_max_clos(board_file):
         else:
             return rdt_res, rdt_res_clos_max
 
-    return list(rdt_res.split(',')), list(map(int, rdt_res_clos_max.split(',')))
+    return list(re.split(', |\s |,', rdt_res)), list(map(int, rdt_res_clos_max.split(',')))
 
 
 def undline_name(name):
