@@ -4,15 +4,18 @@
 #
 
 import sys
+import enum
 import board_cfg_lib
 
+class RDT(enum.Enum):
+    L2 = 0
+    L3 = 1
 
 INCLUDE_HEADER = """
 #include <board.h>
 #include <vtd.h>
 #include <msr.h>
 #include <pci.h>"""
-
 
 MSR_IA32_L2_MASK_BASE = 0x00000D10
 MSR_IA32_L2_MASK_END = 0x00000D4F
@@ -75,16 +78,31 @@ def gen_dmar_structure(config):
     print("\t.drhd_units = drhd_info_array,", file=config)
     print("};", file=config)
 
-
-def gen_cat(config):
+def populate_clos_mask_msr(rdt_res, common_clos_max, config):
     """
-    Get CAT information
+    Populate the clos bitmask and msr index for a given RDT resource
+    :param rdt_res_str: it is a string representing the RDT resource
+    :param common_clos: Least common clos supported by all RDT resource
+    :param config: it is a file pointer of board information for writing to
+    """
+    for idx in range(common_clos_max):
+        print("\t{", file=config)
+        print("\t\t.clos_mask = {0},".format(hex(0xff)), file=config)
+        print("\t\t.msr_index = MSR_IA32_{0}_MASK_BASE + {1},".format(
+              rdt_res, idx), file=config)
+        print("\t},", file=config)
+
+def gen_rdt_res(config):
+    """
+    Get RDT resource (L2, L3) information
     :param config: it is a file pointer of board information for writing to
     """
     err_dic = {}
-    (cache_support, clos_max) = board_cfg_lib.clos_info_parser(board_cfg_lib.BOARD_INFO_FILE)
-    if len(clos_max) != 0:
-        common_clos_max = min(clos_max)
+    rdt_res_str =""
+    res_present = [0, 0]
+    (rdt_resources, rdt_res_clos_max) = board_cfg_lib.clos_info_parser(board_cfg_lib.BOARD_INFO_FILE)
+    if len(rdt_res_clos_max) != 0:
+        common_clos_max = min(rdt_res_clos_max)
     else:
         common_clos_max = 0
 
@@ -93,25 +111,33 @@ def gen_cat(config):
         err_dic["board config: generate board.c failed"] = "CLOS MAX should be less than reserved adress region length of L2/L3 cache"
         return err_dic
 
-    if len(cache_support) == 0 or common_clos_max == 0:
-        print("\nstruct platform_clos_info platform_clos_array[MAX_PLATFORM_CLOS_NUM];", file=config)
+    if len(rdt_resources) == 0 or common_clos_max == 0:
+        print("\nstruct platform_clos_info platform_{0}_clos_array[MAX_PLATFORM_CLOS_NUM];".format("l2"), file=config)
+        print("struct platform_clos_info platform_{0}_clos_array[MAX_PLATFORM_CLOS_NUM];".format("l3"), file=config)
     else:
-        print("\nstruct platform_clos_info platform_clos_array[{}] = {{".format(
-            "MAX_PLATFORM_CLOS_NUM"), file=config)
-        for i_cnt in range(common_clos_max):
-            print("\t{", file=config)
-
-            print("\t\t.clos_mask = {0}U,".format(hex(0xff)), file=config)
-            if cache_support == "L2":
-                print("\t\t.msr_index = MSR_IA32_L2_MASK_BASE + {}U,".format(i_cnt), file=config)
-            elif cache_support == "L3":
-                print("\t\t.msr_index = MSR_IA32_L3_MASK_BASE + {}U,".format(i_cnt), file=config)
+        for rdt_res in rdt_resources:
+            if rdt_res == "L2":
+                rdt_res_str = "l2"
+                print("\nstruct platform_clos_info platform_{0}_clos_array[{1}] = {{".format(rdt_res_str,
+                      "MAX_PLATFORM_CLOS_NUM"), file=config)
+                populate_clos_mask_msr(rdt_res, common_clos_max, config)
+                print("};\n", file=config)
+                res_present[RDT.L2.value] = 1
+            elif rdt_res == "L3":
+                rdt_res_str = "l3"
+                print("\nstruct platform_clos_info platform_{0}_clos_array[{1}] = {{".format(rdt_res_str,
+                      "MAX_PLATFORM_CLOS_NUM"), file=config)
+                populate_clos_mask_msr(rdt_res, common_clos_max, config)
+                print("};\n", file=config)
+                res_present[RDT.L3.value] = 1
             else:
                 err_dic['board config: generate board.c failed'] = "The input of {} was corrupted!".format(board_cfg_lib.BOARD_INFO_FILE)
                 return err_dic
-            print("\t},", file=config)
 
-        print("};\n", file=config)
+        if res_present[RDT.L2.value] == 0:
+            print("struct platform_clos_info platform_{0}_clos_array[{1}];".format("l2", "MAX_PLATFORM_CLOS_NUM"), file=config)
+        elif res_present[RDT.L3.value] == 0:
+            print("struct platform_clos_info platform_{0}_clos_array[{1}];".format("l3", "MAX_PLATFORM_CLOS_NUM"), file=config)
 
     print("", file=config)
     return err_dic
@@ -195,8 +221,8 @@ def generate_file(config):
     # start to parse DMAR info
     gen_dmar_structure(config)
 
-    # start to parse to get CAT info
-    err_dic = gen_cat(config)
+    # start to parse RDT resource info
+    err_dic = gen_rdt_res(config)
     if err_dic:
         return err_dic
 
