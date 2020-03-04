@@ -48,5 +48,6 @@ int32_t init_rdt_cap_info(void);
 bool setup_clos(uint16_t pcpu_id);
 uint64_t clos2pqr_msr(uint16_t clos);
 bool is_platform_rdt_capable(void);
+const struct rdt_info *get_rdt_info(void);
 
 #endif	/* RDT_H */

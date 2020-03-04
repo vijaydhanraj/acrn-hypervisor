@@ -21,12 +21,15 @@
 #include <version.h>
 #include <shell.h>
 #include <vmcs.h>
+#include <rdt.h>
 
 #define TEMP_STR_SIZE		60U
 #define MAX_STR_SIZE		256U
 #define SHELL_PROMPT_STR	"ACRN:\\>"
 
 #define SHELL_LOG_BUF_SIZE		(PAGE_SIZE * MAX_PCPU_NUM / 2U)
+#define NUM_RDT_RESOURCE	3U
+#define RDT_RES_LEN		10U
 static char shell_log_buf[SHELL_LOG_BUF_SIZE];
 
 /* Input Line Other - Switch to the "other" input line (there are only two
@@ -51,6 +54,7 @@ static int32_t shell_cpuid(int32_t argc, char **argv);
 static int32_t shell_trigger_crash(int32_t argc, char **argv);
 static int32_t shell_rdmsr(int32_t argc, char **argv);
 static int32_t shell_wrmsr(int32_t argc, char **argv);
+static int32_t shell_dump_rdt(int32_t argc, char **argv);
 
 static struct shell_cmd shell_cmds[] = {
 	{
@@ -154,6 +158,12 @@ static struct shell_cmd shell_cmds[] = {
 		.cmd_param	= SHELL_CMD_WRMSR_PARAM,
 		.help_str	= SHELL_CMD_WRMSR_HELP,
 		.fcn		= shell_wrmsr,
+	},
+		{
+		.str		= SHELL_CMD_DUMP_RDT,
+		.cmd_param	= SHELL_CMD_DUMP_RDT_PARAM,
+		.help_str	= SHELL_CMD_DUMP_RDT_HELP,
+		.fcn		= shell_dump_rdt,
 	},
 };
 
@@ -1454,4 +1464,41 @@ static int32_t shell_wrmsr(int32_t argc, char **argv)
 	}
 
 	return ret;
+}
+
+static int32_t shell_dump_rdt(__unused int32_t argc, __unused char **argv)
+{
+	int i;
+	char *str = shell_log_buf;
+	size_t len, size = SHELL_LOG_BUF_SIZE;
+	char res_str[NUM_RDT_RESOURCE][RDT_RES_LEN] = {"L3", "L2", "MBA"};
+	const struct rdt_info *rdt_capability_info = get_rdt_info();
+
+	len = snprintf(str, size, "Max configurable CLOS: 0x%x\r\n", MAX_PLATFORM_CLOS_NUM);
+	size -= len;
+	str += len;
+
+	for (i = 0U; i < RDT_NUM_RESOURCES; i++) {
+		if ((i == RDT_RESOURCE_L3) || (i == RDT_RESOURCE_L2)) {
+			len = snprintf(str, size, "%s %s %s\r\n\t%s %s 0x%x\r\n\t%s %s 0x%x\n",
+					(res_str+i), "Allocation support: ",
+					(rdt_capability_info->clos_max > 0) ? "Y":"N", (res_str+i),
+					"Capacity Bitmask(CBM): ", ((1U << rdt_capability_info->cache.cbm_len) - 1U),
+					(res_str+i), "Shared Bitmask: ", rdt_capability_info->cache.bitmask);
+		} else if (i == RDT_RESOURCE_MBA) {
+			len = snprintf(str, size, "%s %s %s\r\n\t%s %s 0x%x - 0x%x\r\n",
+					(res_str+i), "Allocation support: ",
+					(rdt_capability_info->clos_max > 0) ? "Y":"N", (res_str+i), "delay range: ",
+					(100 - rdt_capability_info->membw.mba_max), rdt_capability_info->membw.mba_max);
+		}
+		if (len >= size) {
+			printf("buffer size could not be enough! please check!\n");
+			break;
+		}
+		size -= len;
+		str += len;
+		rdt_capability_info++;
+	}
+	shell_puts(shell_log_buf);
+	return 0;
 }

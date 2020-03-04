@@ -241,3 +241,8 @@ bool is_platform_rdt_capable(void)
 
 	return ret;
 }
+
+const struct rdt_info *get_rdt_info(void)
+{
+	return res_cap_info;
+}

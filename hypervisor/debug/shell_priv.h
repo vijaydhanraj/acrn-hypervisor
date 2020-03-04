@@ -106,4 +106,8 @@ struct shell {
 #define SHELL_CMD_WRMSR_PARAM		"[-p<pcpu_id>]	<msr_index> <value>"
 #define SHELL_CMD_WRMSR_HELP		"Write value (in hexadecimal) to the MSR at msr_index (in hexadecimal) for CPU"\
 					" ID pcpu_id"
+
+#define SHELL_CMD_DUMP_RDT		"dump_rdt"
+#define SHELL_CMD_DUMP_RDT_PARAM	NULL
+#define SHELL_CMD_DUMP_RDT_HELP	"Show RDT Resource information"
 #endif /* SHELL_PRIV_H */
